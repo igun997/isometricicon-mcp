@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
 	clerkSignInURL  = "https://clerk.isometricon.com/v1/client/sign_ins"
 	iconGenerateURL = "https://www.isometricon.com/api/icons/text"
 	creditsURL      = "https://www.isometricon.com/api/user/credits"
+	tokenFileName   = ".isometricon-token.json"
 )
 
 type Client struct {
@@ -23,14 +25,54 @@ type Client struct {
 	httpClient   *http.Client
 }
 
+type storedToken struct {
+	JWT       string `json:"jwt"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
 func New() *Client {
-	return &Client{
+	c := &Client{
 		httpClient: &http.Client{},
 	}
+	c.loadToken()
+	return c
 }
 
 func (c *Client) IsLoggedIn() bool {
 	return c.sessionToken != ""
+}
+
+func tokenPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return tokenFileName
+	}
+	dir := filepath.Join(home, ".config", "isometricon")
+	os.MkdirAll(dir, 0700)
+	return filepath.Join(dir, tokenFileName)
+}
+
+func (c *Client) saveToken() {
+	t := storedToken{
+		JWT:       c.sessionToken,
+		ExpiresAt: time.Now().Add(55 * time.Second).Unix(),
+	}
+	data, _ := json.Marshal(t)
+	os.WriteFile(tokenPath(), data, 0600)
+}
+
+func (c *Client) loadToken() {
+	data, err := os.ReadFile(tokenPath())
+	if err != nil {
+		return
+	}
+	var t storedToken
+	if err := json.Unmarshal(data, &t); err != nil {
+		return
+	}
+	if time.Now().Unix() < t.ExpiresAt {
+		c.sessionToken = t.JWT
+	}
 }
 
 // Login authenticates via Clerk and stores the JWT session token.
@@ -88,6 +130,8 @@ func (c *Client) Login(email, password string) (string, error) {
 		return "", fmt.Errorf("no JWT token in login response")
 	}
 
+	c.saveToken()
+
 	name := session.User.FirstName
 	if session.User.Username != "" {
 		name = session.User.Username
@@ -105,7 +149,7 @@ type GenerateResult struct {
 // GenerateIcon generates an isometric icon from a text prompt.
 func (c *Client) GenerateIcon(prompt, outputPath string) (*GenerateResult, error) {
 	if !c.IsLoggedIn() {
-		return nil, fmt.Errorf("not logged in — call the login tool first")
+		return nil, fmt.Errorf("not logged in — call the login tool first, or set ISOMETRICON_EMAIL and ISOMETRICON_PASSWORD env vars")
 	}
 
 	payload := fmt.Sprintf(`{"prompt":%q}`, prompt)
@@ -177,7 +221,7 @@ type Credits struct {
 // CheckCredits returns the current credit balance.
 func (c *Client) CheckCredits() (*Credits, error) {
 	if !c.IsLoggedIn() {
-		return nil, fmt.Errorf("not logged in — call the login tool first")
+		return nil, fmt.Errorf("not logged in — call the login tool first, or set ISOMETRICON_EMAIL and ISOMETRICON_PASSWORD env vars")
 	}
 
 	req, err := http.NewRequest("GET", creditsURL, nil)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/igun997/isometricicon-mcp/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -13,6 +14,15 @@ import (
 func main() {
 	apiClient := client.New()
 
+	// Auto-login from env vars if not already logged in from stored token
+	if !apiClient.IsLoggedIn() {
+		email := os.Getenv("ISOMETRICON_EMAIL")
+		password := os.Getenv("ISOMETRICON_PASSWORD")
+		if email != "" && password != "" {
+			apiClient.Login(email, password)
+		}
+	}
+
 	s := server.NewMCPServer(
 		"isometricon",
 		"1.0.0",
@@ -21,24 +31,27 @@ func main() {
 
 	// Login tool
 	loginTool := mcp.NewTool("login",
-		mcp.WithDescription("Login to IsometricIcon with your email and password"),
+		mcp.WithDescription("Login to IsometricIcon. Uses ISOMETRICON_EMAIL/ISOMETRICON_PASSWORD env vars if parameters are omitted."),
 		mcp.WithString("email",
-			mcp.Required(),
-			mcp.Description("Your IsometricIcon account email"),
+			mcp.Description("Your IsometricIcon account email (optional if ISOMETRICON_EMAIL is set)"),
 		),
 		mcp.WithString("password",
-			mcp.Required(),
-			mcp.Description("Your IsometricIcon account password"),
+			mcp.Description("Your IsometricIcon account password (optional if ISOMETRICON_PASSWORD is set)"),
 		),
 	)
 	s.AddTool(loginTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		email, err := req.RequireString("email")
-		if err != nil {
-			return mcp.NewToolResultError("email is required"), nil
+		email, _ := req.RequireString("email")
+		password, _ := req.RequireString("password")
+
+		if email == "" {
+			email = os.Getenv("ISOMETRICON_EMAIL")
 		}
-		password, err := req.RequireString("password")
-		if err != nil {
-			return mcp.NewToolResultError("password is required"), nil
+		if password == "" {
+			password = os.Getenv("ISOMETRICON_PASSWORD")
+		}
+
+		if email == "" || password == "" {
+			return mcp.NewToolResultError("email and password are required — provide as parameters or set ISOMETRICON_EMAIL and ISOMETRICON_PASSWORD env vars"), nil
 		}
 
 		name, err := apiClient.Login(email, password)
